@@ -95,7 +95,7 @@ def download(params, /, *, slots: ListProxy = None, lock: Lock = None) -> bool:
     Args:
         params: A Sequence (list, tuple...) of the URL to download and file name to save into.
         slots: The shared storage for acquiring a progress bar slot.
-            This needs to be a list of bools of the same length as the number of threads.
+            This needs to be a list of bools of at least the same length as the number of threads.
         lock: The shared mutex lock.
     Returns:
         The download success.
@@ -181,8 +181,11 @@ if __name__ == '__main__':
     remote_files = {
         k: v
         for k, v in (
+            # the csv file is file,checksum
+            # split by , to get file and checksum in tuple
             j.split(',')
             for j in (
+                # remove the newline
                 i.decode('UTF-8')[:-1]
                 for i in checksums
             )
@@ -194,13 +197,13 @@ if __name__ == '__main__':
         remove('updater.exe.old')
 
     # replace the updater with a newer version if available
-    #if md5mismatch(('updater.exe', remote_files['updater.exe'])):
-    #    print('Updating self...')
-    #    urlretrieve(base_url+'updater.exe', filename='updater.exe.new')
-    #    rename(self_name, 'updater.exe.old')
-    #    rename('updater.exe.new', 'updater.exe')
-    #    startfile('updater.exe')
-    #    sys.exit()
+    if md5mismatch(('updater.exe', remote_files['updater.exe'])):
+        print('Updating self...')
+        urlretrieve(base_url+'updater.exe', filename='updater.exe.new')
+        rename(self_name, 'updater.exe.old')
+        rename('updater.exe.new', 'updater.exe')
+        startfile('updater.exe')
+        sys.exit()
 
     # make a directory if it does not exist yet and selfmove
     print('Checking directory structure...')
@@ -258,10 +261,12 @@ if __name__ == '__main__':
         ).get()  # wait until done
         d_pool.close()
         d_pool.join()
+    if z := r.count(False):
+        print(f'\033[91mFailed to download {z} files\033[0m')
 
     print('Cleaning up unneeded files...')
     # delete the files on local disk that are not on the server
-    # but keep needed files (configs, saves...)
+    # but keep needed files (user configs...)
     for f in set(x for x in local_files if x not in remote_files).difference(needed_files):
         print(f'\033[93m{f}\033[0m no longer required, deleting')
         remove(f)
