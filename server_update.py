@@ -25,15 +25,6 @@ def md5(fn):
     return hash_md5.hexdigest()
 
 
-def cmd(s, ssh=False):
-    if ssh:
-        s = f'ssh srv "stdbuf -oL {s}"'
-    p = subprocess.Popen(s, stdout=subprocess.PIPE)
-    for c in iter(p.stdout.readline, b''):
-        sys.stdout.buffer.write(c)
-        sys.stdout.flush()
-
-
 # files from this program are always ignored
 ignored_files.append(['updater.py', 'updater_package.bat', 'server_updater.py', 'server_package.bat'])
 # the generated updater.exe CANNOT be ignored
