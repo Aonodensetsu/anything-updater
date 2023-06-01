@@ -1,0 +1,6 @@
+# you need the updater in the root of your web server
+updater.exe,f973ccc2979553afd74cd5b62723eb6c
+main.exe,0375b509df4e373f0367fbd1f8d83969
+# files can be in subfolders, the tree will be preserved
+folder\data.bin,61c9b6fe4c1e7249733941cdb2a333d6
+folder\folder2\file.dat,1e4f8420658aaf0a03d5f7a10ad4a0ff
