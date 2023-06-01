@@ -41,7 +41,7 @@ for i in ignored_files:
 print('Creating checksums...')
 if os.path.exists('checksums.csv'):
     os.remove('checksums.csv')
-with open('checksums.csv', mode='w', newline='') as f:
+with open('checksums.csv', mode='w') as f:
     for i in files:
         v = i.lstrip('.\\')
         f.write(f'{v},{md5(i)}')
