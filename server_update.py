@@ -82,12 +82,12 @@ if os.path.exists('checksums.csv'):
 with open('checksums.csv', mode='w') as f:
     for i in files:
         v = i.lstrip('.\\')
-        f.write(f'{v},{md5(i)}')
+        f.write(f'{v},{md5(i)}\n')
 
 print('Creating archive...')
-subprocess.Popen('7z -y -mx9 a files.7z .')
+cmd('7z -y -mx9 a files.7z .')
 for i in ignored_files:
-    subprocess.Popen(f'7z d files.7z {i}')
+    cmd(f'7z d files.7z {i}')
 os.remove('checksums.csv')
 os.remove('updater.exe')
 
