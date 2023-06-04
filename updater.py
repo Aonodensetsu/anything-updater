@@ -186,7 +186,7 @@ if __name__ == '__main__':
             j.split(',')
             for j in (
                 # remove the newline
-                i.decode('UTF-8')[:-1]
+                i.decode('UTF-8').rstrip()
                 for i in checksums
             )
         )
