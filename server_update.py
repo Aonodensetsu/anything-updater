@@ -56,7 +56,7 @@ def cmd(s: str, ssh: bool = False, cd: str = None, sudo: bool = False):
             sudocmd = f'echo {passwd} | sudo -S' if passwd else 'sudo'
             s = f'{sudocmd} {s}'
         if cd: s = f'cd {cd}; {s}'
-        s = f'ssh {ssh_conn}"{s}"'
+        s = f'ssh {ssh_conn} "{s}"'
     p = subprocess.Popen(s, stdout=subprocess.PIPE)
     for c in iter(p.stdout.readline, b''):
         sys.stdout.buffer.write(c)
