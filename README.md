@@ -21,6 +21,8 @@ Plenty of comments to explain what is going on included in the code.
 ### Developer-friendly
 Fill out the variables in [updater.py](updater.py) and run the packaging script, you're done!  
 For more automation, include this project in your project files and run the server packaging script.  
+If you need to update the updater, run the packaging script before the server script.  
+(*the hash changes every time the exe is created, even from the same code, so only make the exe when you want to replace it).  
 For even more automation, fill out the update function in [server_update.py](server_update.py).
 
 ## What is checksums.csv?

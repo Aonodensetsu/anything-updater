@@ -177,7 +177,6 @@ if __name__ == '__main__':
 
     print('Fetching list of latest files...')
     # get {file: checksum} from the server
-    checksums = urlopen(base_url+'checksums.csv')
     remote_files = {
         k: v
         for k, v in (
@@ -187,7 +186,7 @@ if __name__ == '__main__':
             for j in (
                 # remove the newline
                 i.decode('UTF-8').rstrip()
-                for i in checksums
+                for i in urlopen(base_url+'checksums.csv')
             )
         )
     }
