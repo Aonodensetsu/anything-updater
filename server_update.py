@@ -1,5 +1,7 @@
 from urllib.error import HTTPError
 from urllib.request import urlopen
+from time import sleep
+from tqdm import tqdm
 import subprocess
 import hashlib
 import sys
@@ -43,6 +45,8 @@ def upload():
         cmd('mv -f /tmp/files.7z files.7z', ssh=True, sudo=True, cd=root_dir)
         print('Unpacking archive...')
         cmd('7z -aoa x files.7z', ssh=True, sudo=True, cd=root_dir)
+        # wait until the file is released
+        sleep(1)
         print('Setting permissions...')
         cmd('rm files.7z', ssh=True, sudo=True, cd=root_dir)
         cmd('find . -type d -exec chmod +rx {} \\;', ssh=True, sudo=True, cd=root_dir)
@@ -63,7 +67,7 @@ def md5(fn):
     return hash_md5.hexdigest()
 
 
-def cmd(s: str, ssh: bool = False, cd: str = None, sudo: bool = False):
+def cmd(s: str, ssh: bool = False, cd: str = None, sudo: bool = False, out: bool = True):
     if ssh:
         s = f'stdbuf -oL {s}'
         if sudo:
@@ -71,10 +75,13 @@ def cmd(s: str, ssh: bool = False, cd: str = None, sudo: bool = False):
             s = f'{sudocmd} {s}'
         if cd: s = f'cd {cd}; {s}'
         s = f'ssh {ssh_conn} "{s}"'
-    p = subprocess.Popen(s, stdout=subprocess.PIPE)
-    for c in iter(p.stdout.readline, b''):
-        sys.stdout.buffer.write(c)
-        sys.stdout.flush()
+    if out:
+        p = subprocess.Popen(s, stdout=subprocess.PIPE)
+        for c in iter(p.stdout.readline, b''):
+            sys.stdout.buffer.write(c)
+            sys.stdout.flush()
+    else:
+        subprocess.Popen(s, stdout=subprocess.DEVNULL).communicate()
 
 
 # files from this program are always ignored
@@ -88,17 +95,7 @@ files = []
 for root, _, fs in os.walk('.'):
     for i in fs:
         if i in ignored_files: continue
-        files.append((root+'\\'+i).lstrip('.\\'))
-
-print('Creating local checksums...')
-local_files = {
-    f: md5(f)
-    for f in files
-}
-
-with open('checksums.csv', mode='w', newline='') as f:
-    for k, v in local_files.items():
-        f.write(f'{k},{v}\n')
+        files.append((root+'\\'+i).removeprefix('.\\'))
 
 print('Fetching remote checksums to compare...')
 # get {file: checksum} from the server
@@ -112,7 +109,7 @@ try:
             j.split(',')
             for j in (
                 # remove the newline
-                i.decode('UTF-8').rstrip()
+                i.decode('UTF-8').strip()
                 for i in urlopen(base_url+'checksums.csv')
             )
         )
@@ -120,13 +117,35 @@ try:
 except HTTPError:
     remote_files = {}
 
+print('Creating local checksums...')
+local_files = {
+    f: md5(f)
+    for f in files
+}
+
+# keep the updater hash if unchanged
+if 'updater.exe' not in local_files.keys():
+    try:
+        local_files['updater.exe'] = remote_files['updater.exe']
+    except KeyError:
+        print('Updater not in local files and not in remote checksums.csv')
+        print('Please run the server updater with include_all at least once')
+        input('--- END ---')
+        sys.exit()
+
+with open('checksums.csv', mode='w', newline='') as f:
+    for k, v in local_files.items():
+        f.write(f'{k},{v}\n')
+
 # get the list of changed files
 mismatched = [
-    k
-    for k, v in local_files.items()
-    if k in remote_files
-    and k not in ignored_files
-    and v != remote_files[k]
+    fn
+    for fn, md5 in local_files.items()
+    if fn not in ignored_files
+    and (
+        fn not in remote_files
+        or md5 != remote_files[fn]
+    )
 ]
 
 if include_all:
@@ -134,6 +153,7 @@ if include_all:
 
 if not len(mismatched):
     # no files changed, don't update the server
+    print('No files changed')
     os.remove('checksums.csv')
     if os.path.exists('updater.exe'):
         os.remove('updater.exe')
@@ -143,8 +163,8 @@ if not len(mismatched):
 mismatched.append('checksums.csv')
 
 print('Creating archive...')
-for i in mismatched:
-    cmd(f'7z -y -mx9 a files.7z {i}')
+for i in tqdm(mismatched):
+    cmd(f'7z -y -mx9 a files.7z {i}', out=False)
 os.remove('checksums.csv')
 if os.path.exists('updater.exe'):
     os.remove('updater.exe')

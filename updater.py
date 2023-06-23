@@ -1,12 +1,13 @@
-from multiprocessing import Pool, Lock, Manager, cpu_count, freeze_support
-from os import makedirs, chdir, walk, remove, startfile, rename, system
+from os import makedirs, chdir, walk, remove, startfile, rename, system, stat
+from multiprocessing import Lock, Manager, cpu_count, freeze_support
 from os.path import exists, dirname, abspath, basename
+from multiprocessing.pool import ThreadPool, Pool
 from urllib.request import urlopen, urlretrieve
 from multiprocessing.managers import ListProxy
-from multiprocessing.pool import ThreadPool
 from urllib.error import HTTPError
 from hashlib import md5 as hmd5
 from functools import partial
+from typing import Optional
 from time import sleep
 from tqdm import tqdm
 import sys
@@ -28,7 +29,7 @@ ignored_files: list[str] = []
 needed_files: list[str] = ignored_files
 # maximum amount of checksums calculated at once (cpu intensive)
 # capped by the amount of CPU cores
-max_cpu_threads: int = 8
+max_hs_threads: int = 8
 # maximum amount of parallel downloads (bandwidth intensive)
 # capped at 32 because the progress bars would break otherwise
 # if your server has a restrictive rate limit, decrease this and increase the backoff
@@ -37,82 +38,78 @@ max_dl_threads: int = 8
 # wait [base ^ n] seconds before a retry in case of errors
 # mostly applies to rate limiting, but also includes other time-based errors
 backoff_base: int = 3
+# disables selfupdate, autostart and enables some additional logging
+debug = False
 
 
 # --- CODE, HOPEFULLY NO NEED TO CHANGE ANYTHING BELOW HERE ---
-def md5(fn: str) -> str:
+def parallel_hash(params, /, *, slots: ListProxy, lock: Lock) -> Optional[str]:
     """
     Args:
-        fn: The file name to calculate the hash for.
+        params: A Sequence of: file to check and known file hash.
+        slots: A shared list of progress bar slots.
+        lock: A shared mutex.
     Returns:
-        The calculated MD5 hash.
-    """
-    hash_md5 = hmd5()
-    with open(fn, 'rb') as f:
-        for chunk in iter(lambda: f.read(4096), b''):
-            hash_md5.update(chunk)
-    return hash_md5.hexdigest()
-
-
-def md5mismatch(params) -> str | None:
-    """
-    Args:
-        params: A Sequence (list, tuple...) of the file name to hash and known hash to compare against.
-    Returns:
-         The filename, if the hash mismatched.
+         The filename if the hash mismatched, None otherwise.
     """
     fn, md = params
-    # return file name if mismatched and None otherwise
-    # None is falsy and strings are truthy so this still works in an IF
-    if exists(fn) and md5(fn) == md:
-        return None
+    if exists(fn):
+        with lock:
+            # find unoccupied slot for the progress bar
+            index = slots.index(False)
+            # mark the slot as occupied
+            slots[index] = True
+        # make the progress bar
+        t = tqdm(
+            desc='\033[93m' + fn.split('\\')[-1] + '\033[0m',
+            leave=False,
+            position=index,
+            miniters=1,
+            unit='B',
+            unit_scale=True,
+            unit_divisor=1024,
+            bar_format='|{bar:50}| {percentage:3.0f}% [{rate_fmt}] {desc}',
+            total=stat(fn).st_size
+        )
+        # calculate the hash
+        md5_hash = hmd5()
+        with open(fn, 'rb') as f:
+            ncalls = 0
+            for chunk in iter(lambda: f.read(4096), b''):
+                md5_hash.update(chunk)
+                if not ncalls:  # only update the bar every 10 iterats, slows progress a lot
+                    with lock: t.update(40960)
+                ncalls += 1
+                ncalls %= 10
+        with lock:
+            # finish the progress bar
+            t.close()
+            # mark the progress bar slot as unoccupied
+            slots[index] = False
+        # return file name if mismatched and None otherwise
+        # None is falsy and strings are truthy so this still works in an IF
+        if md5_hash.hexdigest() == md: return None
     return fn
 
 
-class TqdmUpTo(tqdm):
-    """
-    This is for making multithreaded downloads with progress bars.
-    """
-    def update_to(self, b: int = 1, bsize: int = 1, tsize: int = None, lock: Lock = None) -> None:
-        """
-        A wrapper to update the total file size if the server reports wrongly.
-        Args:
-            b: The current block number.
-            bsize: The current block size.
-            tsize: The total file size.
-            lock: The shared mutex lock.
-        """
-        if tsize is not None:
-            self.total = tsize
-        # get the mutex
-        with lock:
-            self.update(b * bsize - self.n)
-
-
-def download(params, /, *, slots: ListProxy = None, lock: Lock = None) -> bool:
+def parallel_dl(params, /, *, slots: ListProxy, lock: Lock) -> Optional[str]:
     """
     A function to multithread download with progress bars for each thread.
     Args:
-        params: A Sequence (list, tuple...) of the URL to download and file name to save into.
-        slots: The shared storage for acquiring a progress bar slot.
-            This needs to be a list of bools of at least the same length as the number of threads.
-        lock: The shared mutex lock.
+        params: A Sequence of: file name to save into and URL to download.
+        slots: A shared list of progress bar slots.
+        lock: A shared mutex.
     Returns:
-        The download success.
+        The filename, if did not succeed.
     """
-    url, fn = params
-    # get the mutex
+    fn, url = params
     with lock:
-        # find unoccupied slot for the progress bar
         index = slots.index(False)
-        # mark the slot as occupied
         slots[index] = True
     # create the directory structure if it does not exist yet
-    if d := '\\'.join(fn.split('\\')[:-1]):
-        # ignore if another thread already created it after the check
-        makedirs(d, exist_ok=True)
+    if d := '\\'.join(fn.split('\\')[:-1]): makedirs(d, exist_ok=True)
     # make a progress bar
-    t = TqdmUpTo(
+    t = tqdm(
         desc='\033[93m' + fn.split('\\')[-1] + '\033[0m',
         leave=False,
         position=index,
@@ -122,21 +119,28 @@ def download(params, /, *, slots: ListProxy = None, lock: Lock = None) -> bool:
         unit_divisor=1024,
         bar_format='|{bar:50}| {percentage:3.0f}% [{rate_fmt}] {desc}'
     )
-    # pass the same lock on every retry
-    hook = partial(t.update_to, lock=lock)
 
-    def dl_retry(n: int) -> bool:
+    ncalls = 0
+
+    def hook(b: int = 1, bsize: int = 1, tsize: int = None) -> None:
+        nonlocal ncalls
+        ncalls += 1
+        ncalls %= 30
+        if not ncalls:  # only update bar every 30 iters, slows progress a lot
+            if tsize is not None: t.total = tsize
+            with lock: t.update(b * bsize - t.n)
+
+    def dl_try(n: int) -> Optional[str]:
         """
         Args:
             n: The current retry number.
         Returns:
-            The download success.
+            The filename, if did not succeed.
         """
-        if n > 5: return False
+        if n > 5: return fn
         try:
-            # pass the same lock on every retry, on every thread
             urlretrieve(url, filename=fn, reporthook=hook)
-            return True
+            return None
         except HTTPError as e:
             match e.code:
                 # 408 Request Timeout
@@ -146,14 +150,13 @@ def download(params, /, *, slots: ListProxy = None, lock: Lock = None) -> bool:
                 case 408 | 425 | 429 | 504:
                     # use exponential backoff for the retries
                     sleep(max(2, backoff_base) ** n)
-                    return dl_retry(n + 1)
+                    return dl_try(n + 1)
                 # don't handle errors which cannot be fixed by waiting
-                case _: return False
-    res = dl_retry(1)
+                case _:
+                    return fn
+    res = dl_try(1)
     with lock:
-        # finish the progress bar
         t.close()
-        # mark the progress bar slot as unoccupied
         slots[index] = False
     return res
 
@@ -184,8 +187,8 @@ if __name__ == '__main__':
             # split by , to get file and checksum in tuple
             j.split(',')
             for j in (
-                # remove the newline
-                i.decode('UTF-8').rstrip()
+                # remove whitespace
+                i.decode('UTF-8').strip()
                 for i in urlopen(base_url+'checksums.csv')
             )
         )
@@ -196,15 +199,21 @@ if __name__ == '__main__':
         remove('updater.exe.old')
 
     # replace the updater with a newer version if available
-    if md5mismatch(('updater.exe', remote_files['updater.exe'])):
-        print('Updating self...')
-        urlretrieve(base_url+'updater.exe', filename='updater.exe.new')
-        rename(self_name, 'updater.exe.old')
-        rename('updater.exe.new', 'updater.exe')
-        startfile('updater.exe')
-        sys.exit()
+    if not debug:
+        # calculate without using parallel function
+        md5_hash = hmd5()
+        with open('updater.exe', 'rb') as f:
+            for chunk in iter(lambda: f.read(4096), b''):
+                md5_hash.update(chunk)
+        if not md5_hash.hexdigest() == remote_files['updater.exe']:
+            print('Updating self...')
+            urlretrieve(base_url+'updater.exe', filename='updater.exe.new')
+            rename(self_name, 'updater.exe.old')
+            rename('updater.exe.new', 'updater.exe')
+            startfile('updater.exe')
+            sys.exit()
 
-    # make a directory if it does not exist yet and selfmove
+    # make base_dir if it does not exist yet and move updater
     print('Checking directory structure...')
     if base_dir not in self_path.split('\\')[-1]:
         makedirs(base_dir, exist_ok=True)
@@ -215,61 +224,67 @@ if __name__ == '__main__':
     print('Gathering local files...')
     local_files = set()
     for root, _, fs in walk('.'):
-        for i in fs:
-            local_files.add((root+'\\'+i).lstrip('.\\'))
+        for i in fs: local_files.add((root+'\\'+i).removeprefix('.\\'))
+
+    hs_threads = max(1, min(cpu_count() - 1, max_hs_threads))
+    dl_threads = max(1, min(max_dl_threads, 32))
+    # create shared storage for threads
+    manager = Manager()
+    lock = manager.Lock()
+    slots = manager.list(list(False for _ in range(max(hs_threads, dl_threads))))
 
     print('Comparing checksums (in parallel)...')
-    cpu_thread_count = max(1, min(cpu_count() - 1, max_cpu_threads))
-    with Pool(cpu_thread_count) as c_pool:
+    with Pool(hs_threads) as hs_pool:
         outdated = [
             i
-            for i in list(  # list() -> waits for everything to finish
-                tqdm(  # make a progress bar
-                    c_pool.imap_unordered(md5mismatch, remote_files.items()),  # hash in parallel
-                    total=len(remote_files),
-                    bar_format='|{bar:50}| {percentage:3.0f}% [{rate_fmt}] {desc}'
-                )
+            for i in hs_pool.imap_unordered(
+                partial(
+                    parallel_hash,
+                    slots=slots,
+                    lock=lock
+                ),
+                remote_files.items()
             )
-            if i  # ignore the 'None' results
-            and i not in ignored_files  # ignore the files chosen by user
+            if i  # ignore "None" which marks success
+            and i not in ignored_files
         ]
-        c_pool.close()
-        c_pool.join()
+    if debug: print(f'outdated: {outdated}')
 
-    print(f'Updating files (in parallel)...')
-    dl_thread_count = max(1, min(max_dl_threads, 32))
-    # create a mutex and shared storage
-    lock = Lock()
-    manager = Manager()
-    # the list MUST be of at least the same length as the amount of threads used
-    slots = manager.list(list(False for _ in range(dl_thread_count)))
+    # the threads close too quickly to go back to the beginning of line, go back manually
+    print('\rUpdating files (in parallel)...')
     outdated_urls = [
         base_url + i.replace('\\', '/')  # replace Windows paths to URLs ( \ -> / )
         for i in outdated
     ]
-    # make enough empty lines, this should be unnecessary but just in case
-    print('\n' * dl_thread_count + '\033[1A' * dl_thread_count, end='', flush=True)
-    with ThreadPool(dl_thread_count) as d_pool:
-        r = d_pool.map_async(  # download in parallel
-            partial(  # give all threads the same lock and storage
-                download,
-                lock=lock,
-                slots=slots
-            ),
-            zip(outdated_urls, outdated)  # give changing parameters
-        ).get()  # wait until done
-        d_pool.close()
-        d_pool.join()
-    if z := r.count(False):
-        print(f'\033[91mFailed to download {z} files\033[0m')
+    with ThreadPool(dl_threads) as dl_pool:
+        failed = [
+            i
+            for i in dl_pool.imap_unordered(
+                partial(
+                    parallel_dl,
+                    slots=slots,
+                    lock=lock
+                ),
+                zip(outdated, outdated_urls)
+            )
+            if i  # ignore "None" which marks success
+        ]
+
+    if len(failed):
+        print(f'\033[91mFailed\033[0m to download {len(failed)} files, please try again later')
+        if debug:
+            for i in failed: print(f'Failed: {i}')
+        sleep(5)
 
     print('Cleaning up unneeded files...')
     # delete the files on local disk that are not on the server
     # but keep needed files (user configs...)
-    for f in set(x for x in local_files if x not in remote_files).difference(needed_files):
-        print(f'\033[93m{f}\033[0m no longer required, deleting')
+    for f in set(
+        i
+        for i in local_files
+        if i not in remote_files
+    ).difference(needed_files):
         remove(f)
 
     # start the main program
-    if main_exe:
-        startfile(main_exe)
+    if main_exe and not failed and not debug: startfile(main_exe)
