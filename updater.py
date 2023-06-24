@@ -77,10 +77,10 @@ def parallel_hash(params, /, *, slots: ListProxy, lock: Lock) -> Optional[str]:
             ncalls = 0
             for chunk in iter(lambda: f.read(4096), b''):
                 md5_hash.update(chunk)
-                if not ncalls:  # only update the bar every 10 iterats, slows progress a lot
-                    with lock: t.update(40960)
+                if not ncalls:  # only update the bar every 1000 iters (8MB), slows progress a lot
+                    with lock: t.update(4096 * 1000)
                 ncalls += 1
-                ncalls %= 10
+                ncalls %= 1000
         with lock:
             # finish the progress bar
             t.close()
@@ -120,13 +120,8 @@ def parallel_dl(params, /, *, slots: ListProxy, lock: Lock) -> Optional[str]:
         bar_format='|{bar:50}| {percentage:3.0f}% [{rate_fmt}] {desc}'
     )
 
-    ncalls = 0
-
     def hook(b: int = 1, bsize: int = 1, tsize: int = None) -> None:
-        nonlocal ncalls
-        ncalls += 1
-        ncalls %= 30
-        if not ncalls:  # only update bar every 30 iters, slows progress a lot
+        if b % 500 == 1:  # only update bar every 500 blocks (8MB), slows progress a lot
             if tsize is not None: t.total = tsize
             with lock: t.update(b * bsize - t.n)
 
