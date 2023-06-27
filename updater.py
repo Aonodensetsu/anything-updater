@@ -29,11 +29,11 @@ ignored_files: list[str] = []
 needed_files: list[str] = ignored_files
 # maximum amount of checksums calculated at once (cpu intensive)
 # capped by the amount of CPU cores
-max_hs_threads: int = 8
+max_hs_threads: int = 4
 # maximum amount of parallel downloads (bandwidth intensive)
 # capped at 32 because the progress bars would break otherwise
 # if your server has a restrictive rate limit, decrease this and increase the backoff
-max_dl_threads: int = 8
+max_dl_threads: int = 4
 # the base to use for exponential backoff
 # wait [base ^ n] seconds before a retry in case of errors
 # mostly applies to rate limiting, but also includes other time-based errors
@@ -77,7 +77,7 @@ def parallel_hash(params, /, *, slots: ListProxy, lock: Lock) -> Optional[str]:
             ncalls = 0
             for chunk in iter(lambda: f.read(4096), b''):
                 md5_hash.update(chunk)
-                if not ncalls:  # only update the bar every 1000 iters (8MB), slows progress a lot
+                if not ncalls:  # only update the bar every 1000 iters (8MB)
                     with lock: t.update(4096 * 1000)
                 ncalls += 1
                 ncalls %= 1000
@@ -121,7 +121,7 @@ def parallel_dl(params, /, *, slots: ListProxy, lock: Lock) -> Optional[str]:
     )
 
     def hook(b: int = 1, bsize: int = 1, tsize: int = None) -> None:
-        if b % 500 == 1:  # only update bar every 500 blocks (8MB), slows progress a lot
+        if b % 500 == 1:  # only update bar every 500 blocks (8MB)
             if tsize is not None: t.total = tsize
             with lock: t.update(b * bsize - t.n)
 
