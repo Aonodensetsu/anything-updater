@@ -1,4 +1,6 @@
 # anything_updater
+[![ko-fi](https://img.shields.io/badge/show-support-555599?style=for-the-badge&logo=kofi&link=https%3A%2F%2Fko-fi.com%2Faonodensetsu
+)](https://ko-fi.com/aonodensetsu)  
 An oh-so-simple updater for all manner of things (currently for Windows).
 
 ### User-friendly
