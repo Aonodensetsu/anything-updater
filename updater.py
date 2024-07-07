@@ -43,6 +43,11 @@ debug = False
 
 
 # --- CODE, HOPEFULLY NO NEED TO CHANGE ANYTHING BELOW HERE ---
+CHK = 'checksums.csv'
+UPD = 'updater.exe'
+UPDO = UPD + '.old'
+
+
 def parallel_hash(params, /, *, slots: ListProxy, lock: Lock) -> Optional[str]:
     """
     Args:
@@ -78,7 +83,8 @@ def parallel_hash(params, /, *, slots: ListProxy, lock: Lock) -> Optional[str]:
             for chunk in iter(lambda: f.read(4096), b''):
                 md5_hash.update(chunk)
                 if not ncalls:  # only update the bar every 1000 iters (8MB)
-                    with lock: t.update(4096 * 1000)
+                    with lock:
+                        t.update(4096 * 1000)
                 ncalls += 1
                 ncalls %= 1000
         with lock:
@@ -88,7 +94,8 @@ def parallel_hash(params, /, *, slots: ListProxy, lock: Lock) -> Optional[str]:
             slots[index] = False
         # return file name if mismatched and None otherwise
         # None is falsy and strings are truthy so this still works in an IF
-        if md5_hash.hexdigest() == md: return None
+        if md5_hash.hexdigest() == md:
+            return None
     return fn
 
 
@@ -107,7 +114,8 @@ def parallel_dl(params, /, *, slots: ListProxy, lock: Lock) -> Optional[str]:
         index = slots.index(False)
         slots[index] = True
     # create the directory structure if it does not exist yet
-    if d := '\\'.join(fn.split('\\')[:-1]): makedirs(d, exist_ok=True)
+    if d := '\\'.join(fn.split('\\')[:-1]):
+        makedirs(d, exist_ok=True)
     # make a progress bar
     t = tqdm(
         desc='\033[93m' + fn.split('\\')[-1] + '\033[0m',
@@ -122,8 +130,10 @@ def parallel_dl(params, /, *, slots: ListProxy, lock: Lock) -> Optional[str]:
 
     def hook(b: int = 1, bsize: int = 1, tsize: int = None) -> None:
         if b % 500 == 1:  # only update bar every 500 blocks (8MB)
-            if tsize is not None: t.total = tsize
-            with lock: t.update(b * bsize - t.n)
+            if tsize is not None:
+                t.total = tsize
+            with lock:
+                t.update(b * bsize - t.n)
 
     def dl_try(n: int) -> Optional[str]:
         """
@@ -132,7 +142,8 @@ def parallel_dl(params, /, *, slots: ListProxy, lock: Lock) -> Optional[str]:
         Returns:
             The filename, if did not succeed.
         """
-        if n > 5: return fn
+        if n > 5:
+            return fn
         try:
             urlretrieve(url, filename=fn, reporthook=hook)
             return None
@@ -171,7 +182,7 @@ if __name__ == '__main__':
     chdir(self_path)
 
     # never delete the updater
-    needed_files.append('updater.exe')
+    needed_files.append(UPD)
 
     print('Fetching list of latest files...')
     # get {file: checksum} from the server
@@ -184,7 +195,7 @@ if __name__ == '__main__':
             for j in (
                 # remove whitespace
                 i.decode('UTF-8').strip()
-                for i in urlopen(base_url+'checksums.csv')
+                for i in urlopen(base_url + CHK)
             )
         )
     }
@@ -197,15 +208,15 @@ if __name__ == '__main__':
     if not debug:
         # calculate without using parallel function
         md5_hash = hmd5()
-        with open('updater.exe', 'rb') as f:
+        with open(UPD, 'rb') as f:
             for chunk in iter(lambda: f.read(4096), b''):
                 md5_hash.update(chunk)
-        if not md5_hash.hexdigest() == remote_files['updater.exe']:
+        if md5_hash.hexdigest() != remote_files[UPD]:
             print('Updating self...')
-            urlretrieve(base_url+'updater.exe', filename='updater.exe.new')
+            urlretrieve(base_url + UPD, filename='updater.exe.new')
             rename(self_name, 'updater.exe.old')
-            rename('updater.exe.new', 'updater.exe')
-            startfile('updater.exe')
+            rename('updater.exe.new', UPD)
+            startfile(UPD)
             sys.exit()
 
     # make base_dir if it does not exist yet and move updater
@@ -219,7 +230,8 @@ if __name__ == '__main__':
     print('Gathering local files...')
     local_files = set()
     for root, _, fs in walk('.'):
-        for i in fs: local_files.add((root+'\\'+i).removeprefix('.\\'))
+        for i in fs:
+            local_files.add((root + '\\' + i).removeprefix('.\\'))
 
     hs_threads = max(1, min(cpu_count() - 1, max_hs_threads))
     dl_threads = max(1, min(max_dl_threads, 32))
@@ -243,7 +255,8 @@ if __name__ == '__main__':
             if i  # ignore "None" which marks success
             and i not in ignored_files
         ]
-    if debug: print(f'outdated: {outdated}')
+    if debug:
+        print(f'outdated: {outdated}')
 
     # the threads close too quickly to go back to the beginning of line, go back manually
     print('\rUpdating files (in parallel)...')
@@ -268,7 +281,8 @@ if __name__ == '__main__':
     if len(failed):
         print(f'\033[91mFailed\033[0m to download {len(failed)} files, please try again later')
         if debug:
-            for i in failed: print(f'Failed: {i}')
+            for i in failed:
+                print(f'Failed: {i}')
         sleep(5)
 
     print('Cleaning up unneeded files...')
@@ -282,4 +296,5 @@ if __name__ == '__main__':
         remove(f)
 
     # start the main program
-    if main_exe and not failed and not debug: startfile(main_exe)
+    if main_exe and not failed and not debug:
+        startfile(main_exe)

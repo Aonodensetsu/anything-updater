@@ -59,6 +59,9 @@ def upload():
 
 
 # --- CODE, HOPEFULLY NO NEED TO CHANGE ANYTHING BELOW HERE ---
+UPD = 'updater.exe'
+
+
 def md5(fn):
     hash_md5 = hashlib.md5()
     with open(fn, 'rb') as f:
@@ -95,7 +98,7 @@ files = []
 for root, _, fs in os.walk('.'):
     for i in fs:
         if i in ignored_files: continue
-        files.append((root+'\\'+i).removeprefix('.\\'))
+        files.append((root + '\\' + i).removeprefix('.\\'))
 
 print('Fetching remote checksums to compare...')
 # get {file: checksum} from the server
@@ -124,9 +127,9 @@ local_files = {
 }
 
 # keep the updater hash if unchanged
-if 'updater.exe' not in local_files.keys():
+if UPD not in local_files.keys():
     try:
-        local_files['updater.exe'] = remote_files['updater.exe']
+        local_files[UPD] = remote_files[UPD]
     except KeyError:
         print('Updater not in local files and not in remote checksums.csv')
         print('Please run the server updater with include_all at least once')
@@ -155,8 +158,8 @@ if not len(mismatched):
     # no files changed, don't update the server
     print('No files changed')
     os.remove('checksums.csv')
-    if os.path.exists('updater.exe'):
-        os.remove('updater.exe')
+    if os.path.exists(UPD):
+        os.remove(UPD)
     sys.exit()
 
 # always include the latest checksums
@@ -166,7 +169,7 @@ print('Creating archive...')
 for i in tqdm(mismatched):
     cmd(f'7z -y -mx9 a files.7z {i}', out=False)
 os.remove('checksums.csv')
-if os.path.exists('updater.exe'):
-    os.remove('updater.exe')
+if os.path.exists(UPD):
+    os.remove(UPD)
 
 upload()
